@@ -1,0 +1,25 @@
+spring:
+  application:
+    name: pms-backend
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/pms}
+    username: ${DB_USERNAME:pms}
+    password: ${DB_PASSWORD:pms}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+server:
+  port: ${SERVER_PORT:8080}
+
+app:
+  jwt:
+    secret: ${JWT_SECRET:change-this-secret-to-a-very-long-production-secret-key-1234567890}
+    expiration-minutes: ${JWT_EXPIRATION_MINUTES:480}
