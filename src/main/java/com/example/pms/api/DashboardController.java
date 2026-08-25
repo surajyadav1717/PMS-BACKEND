@@ -7,8 +7,8 @@ import com.example.pms.repository.AppUserRepository;
 import com.example.pms.repository.EmployeeRepository;
 import com.example.pms.repository.GoalRepository;
 import com.example.pms.repository.PerformanceReviewRepository;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
-
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -26,6 +26,7 @@ public class DashboardController {
     }
 
     @GetMapping
+    @Transactional(readOnly = true)
     public Map<String,Object> dashboard() {
         AppUser u = currentUser();
         List<PerformanceReview> data = switch (u.getRole()) {
