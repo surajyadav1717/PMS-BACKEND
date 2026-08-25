@@ -1,9 +1,11 @@
 package com.example.pms.api;
 
+import com.example.pms.domain.NotificationType;
 import com.example.pms.domain.ReviewStatus;
 import com.example.pms.domain.ReviewType;
 import com.example.pms.entity.*;
 import com.example.pms.repository.*;
+import com.example.pms.service.NotificationService;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -21,12 +23,14 @@ public class ReviewController {
     private final PerformanceCriterionRepository criteria;
     private final AppUserRepository users;
     private final AuditLogRepository audit;
+    private final NotificationService notificationService;
 
     public ReviewController(PerformanceReviewRepository reviews, EmployeeRepository employees,
                             ReviewCycleRepository cycles, PerformanceCriterionRepository criteria,
-                            AppUserRepository users, AuditLogRepository audit) {
+                            AppUserRepository users, AuditLogRepository audit, NotificationService notificationService) {
         this.reviews = reviews; this.employees = employees; this.cycles = cycles;
         this.criteria = criteria; this.users = users; this.audit = audit;
+        this.notificationService = notificationService;
     }
 
     public record ItemRequest(Long criterionId, Double score, String comments) {}
@@ -101,7 +105,26 @@ public class ReviewController {
         review.setStatus(ReviewStatus.PENDING_HEAD_APPROVAL);
         review.setSubmittedAt(LocalDateTime.now());
         review.setManagerApprovedAt(LocalDateTime.now());
+
+        var savedReview = reviews.save(review);
+
         audit(id, "MANAGER_APPROVED_REVIEW");
+
+        AppUser headUser =
+                users.findByEmployeeId(
+                        review.getEmployee().getHead().getId()
+                ).orElseThrow();
+
+
+        notificationService.create(
+                headUser,
+                "Review Pending",
+                review.getEmployee().getFullName()
+                        + "'s performance review is waiting for your approval.",
+                NotificationType.REVIEW_SUBMITTED,
+                review.getId(),
+                "PERFORMANCE_REVIEW"
+        );
         return dto(reviews.save(review));
     }
 
@@ -116,8 +139,27 @@ public class ReviewController {
         review.setStatus(ReviewStatus.APPROVED);
         review.setHeadApprovedAt(LocalDateTime.now());
         review.setApprovedAt(LocalDateTime.now());
+
+        var savedReview = reviews.save(review);
+
         audit(id, "HEAD_FINAL_APPROVAL");
+
+        AppUser employeeUser =
+                users.findByEmployeeId(
+                        review.getEmployee().getId()
+                ).orElseThrow();
+
+        notificationService.create(
+                employeeUser,
+                "Performance Review Approved",
+                "Your performance review has been approved by your Head.",
+                NotificationType.REVIEW_APPROVED,
+                review.getId(),
+                "PERFORMANCE_REVIEW"
+        );
+
         return dto(reviews.save(review));
+
     }
 
     @PostMapping("/{id}/reject")
@@ -131,7 +173,29 @@ public class ReviewController {
         review.setStatus(ReviewStatus.REJECTED);
         review.setRejectedAt(LocalDateTime.now());
         review.setRejectionComments(request == null ? null : request.comments());
+
+        var savedReview = reviews.save(review);
+
         audit(id, "HEAD_REJECTED_REVIEW");
+
+        AppUser managerUser =
+                users.findByEmployeeId(
+                        review.getReviewer().getId()
+                ).orElseThrow();
+
+        String message =
+                "Review for "
+                        + review.getEmployee().getFullName()
+                        + " has been rejected.";
+
+        notificationService.create(
+                managerUser,
+                "Review Rejected",
+                message,
+                NotificationType.REVIEW_REJECTED,
+                review.getId(),
+                "PERFORMANCE_REVIEW"
+        );
         return dto(reviews.save(review));
     }
 
@@ -148,7 +212,26 @@ public class ReviewController {
         }
         review.setStatus(ReviewStatus.ACKNOWLEDGED);
         review.setAcknowledgedAt(LocalDateTime.now());
+
+        var savedReview = reviews.save(review);
+
         audit(id, "REVIEW_ACKNOWLEDGED");
+
+        AppUser managerUser =
+                users.findByEmployeeId(
+                        review.getReviewer().getId()
+                ).orElseThrow();
+
+
+        notificationService.create(
+                managerUser,
+                "Review Acknowledged",
+                review.getEmployee().getFullName()
+                        + " has acknowledged the performance review.",
+                NotificationType.REVIEW_ACKNOWLEDGED,
+                review.getId(),
+                "PERFORMANCE_REVIEW"
+        );
         return dto(reviews.save(review));
     }
 
