@@ -83,11 +83,13 @@ public class NotificationService {
     ) {
 
         Notification notification =
-                notificationRepository.findById(notificationId)
+                notificationRepository
+                        .findByIdAndUserId(notificationId, userId)
                         .orElseThrow(() ->
                                 new RuntimeException(
                                         "Notification not found"
-                                ));
+                                )
+                        );
 
         // Security check
         if (!notification.getUser().getId().equals(userId)) {

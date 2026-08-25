@@ -6,6 +6,7 @@ import com.example.pms.domain.ReviewType;
 import com.example.pms.entity.*;
 import com.example.pms.repository.*;
 import com.example.pms.service.NotificationService;
+import jakarta.transaction.Transactional;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -56,45 +57,143 @@ public class ReviewController {
 
     @PostMapping
     @PreAuthorize("hasRole('MANAGER')")
+    @Transactional
     public ReviewDto create(@RequestBody ReviewRequest request) {
-        var employee = employees.findById(request.employeeId()).orElseThrow();
-        var cycle = cycles.findById(request.cycleId()).orElseThrow();
+
+        System.out.println("========== CREATE REVIEW DEBUG ==========");
+        System.out.println("REQUEST employeeId = " + request.employeeId());
+        System.out.println("REQUEST cycleId    = " + request.cycleId());
+        System.out.println("REQUEST reviewType = " + request.reviewType());
+
+        // 1. Employee
+        var employee = employees.findById(request.employeeId())
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Employee not found: " + request.employeeId()
+                ));
+
+        System.out.println("FOUND EMPLOYEE     = " + employee.getId());
+        System.out.println("EMPLOYEE MANAGER   = " +
+                (employee.getManager() == null
+                        ? null
+                        : employee.getManager().getId()));
+        System.out.println("EMPLOYEE HEAD      = " +
+                (employee.getHead() == null
+                        ? null
+                        : employee.getHead().getId()));
+
+        // 2. Review Cycle
+        var cycle = cycles.findById(request.cycleId())
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Review cycle not found: " + request.cycleId()
+                ));
+
+        System.out.println("FOUND CYCLE        = " + cycle.getId());
+        System.out.println("CYCLE TYPE         = " + cycle.getReviewType());
+        System.out.println("CYCLE STATUS       = " + cycle.getStatus());
+
+        // 3. Current logged-in employee
         var current = currentEmployee();
-        if (current == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "User is not linked to an employee");
 
-        // Every employee review must have that employee's manager as the rating owner.
+        if (current == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "User is not linked to an employee"
+            );
+        }
+
+        System.out.println("CURRENT EMPLOYEE   = " + current.getId());
+
+        // 4. Employee's assigned manager
         Employee manager = employee.getManager();
+
         if (manager == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Employee does not have a manager assigned");
-        }
-        if (!current.getId().equals(manager.getId())) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only the employee's manager can create the rating");
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Employee does not have a manager assigned"
+            );
         }
 
+        System.out.println("ASSIGNED MANAGER   = " + manager.getId());
+
+        // 5. Manager ownership check
+        if (!current.getId().equals(manager.getId())) {
+
+            System.out.println("❌ MANAGER CHECK FAILED");
+            System.out.println("Current employee = " + current.getId());
+            System.out.println("Assigned manager = " + manager.getId());
+
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    "Only the employee's manager can create the rating"
+            );
+        }
+
+        System.out.println("✅ MANAGER CHECK PASSED");
+
+        // 6. Create review
         var review = new PerformanceReview();
+
         review.setEmployee(employee);
         review.setReviewer(manager);
         review.setReviewCycle(cycle);
         review.setReviewType(request.reviewType());
         review.setManagerComments(request.managerComments());
         review.setStatus(ReviewStatus.DRAFT);
+
+        // 7. Add review items
         if (request.items() != null) {
+
+            System.out.println("ITEM COUNT = " + request.items().size());
+
             request.items().forEach(item -> {
-                var criterion = criteria.findById(item.criterionId()).orElseThrow();
+
+                System.out.println(
+                        "ITEM criterionId=" + item.criterionId()
+                                + ", score=" + item.score()
+                );
+
+                var criterion = criteria.findById(item.criterionId())
+                        .orElseThrow(() -> new ResponseStatusException(
+                                HttpStatus.NOT_FOUND,
+                                "Criterion not found: " + item.criterionId()
+                        ));
+
                 var ri = new PerformanceReviewItem();
-                ri.setReview(review); ri.setCriterion(criterion);
-                ri.setScore(item.score()); ri.setComments(item.comments());
+
+                ri.setReview(review);
+                ri.setCriterion(criterion);
+                ri.setScore(item.score());
+                ri.setComments(item.comments());
+
                 review.getItems().add(ri);
             });
         }
+
+        // 8. Calculate score
         calculateScore(review);
-        return dto(reviews.save(review));
+
+        System.out.println("OVERALL SCORE      = " + review.getOverallScore());
+
+        // 9. Save
+        var saved = reviews.save(review);
+
+        System.out.println("✅ REVIEW CREATED");
+        System.out.println("REVIEW ID          = " + saved.getId());
+        System.out.println("REVIEW STATUS      = " + saved.getStatus());
+        System.out.println("==========================================");
+
+        return dto(saved);
     }
 
     @PostMapping("/{id}/submit")
     @PreAuthorize("hasRole('MANAGER')")
+    @Transactional
     public ReviewDto submit(@PathVariable Long id) {
-        var review = reviews.findById(id).orElseThrow();
+
+        var review = reviews.findByIdWithEmployeeAndHead(id)
+                .orElseThrow();
         assertManagerOwner(review);
         if (!(review.getStatus() == ReviewStatus.DRAFT || review.getStatus() == ReviewStatus.REJECTED)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Only draft or rejected reviews can be submitted");
@@ -125,11 +224,12 @@ public class ReviewController {
                 review.getId(),
                 "PERFORMANCE_REVIEW"
         );
-        return dto(reviews.save(review));
+        return dto(savedReview);
     }
 
     @PostMapping("/{id}/approve")
     @PreAuthorize("hasRole('HEAD')")
+    @Transactional
     public ReviewDto approve(@PathVariable Long id) {
         var review = reviews.findById(id).orElseThrow();
         assertHeadOwner(review);
@@ -164,6 +264,7 @@ public class ReviewController {
 
     @PostMapping("/{id}/reject")
     @PreAuthorize("hasRole('HEAD')")
+    @Transactional
     public ReviewDto reject(@PathVariable Long id, @RequestBody(required = false) RejectRequest request) {
         var review = reviews.findById(id).orElseThrow();
         assertHeadOwner(review);
@@ -201,6 +302,7 @@ public class ReviewController {
 
     @PostMapping("/{id}/acknowledge")
     @PreAuthorize("hasRole('EMPLOYEE')")
+    @Transactional
     public ReviewDto acknowledge(@PathVariable Long id) {
         var review = reviews.findById(id).orElseThrow();
         var current = currentEmployee();
