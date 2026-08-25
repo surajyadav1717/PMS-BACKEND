@@ -19,7 +19,7 @@ public class AuthController {
         this.users = users; this.encoder = encoder; this.jwt = jwt;
     }
 
-    public record LoginRequest(@NotBlank String username, @NotBlank String password) {}
+    public record LoginRequest(@NotBlank String username, String password) {}
     public record LoginResponse(String token, String username, String role, Long employeeId) {}
 
     @PostMapping("/login")
